@@ -1,11 +1,10 @@
-name: Nekoray build matrix - cmake
+name: Nekoray build matrix - cmake (Windows Only)
 
 on:
+  schedule:
+    - cron: '0 0 * * *'  # Run every day at midnight UTC
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release Tag'
-        required: true
       publish:
         description: 'Publish: If want ignore'
         required: false
@@ -16,7 +15,7 @@ jobs:
   build-go:
     strategy:
       matrix:
-        cross_os: [ windows, linux ]
+        cross_os: [ windows ]
         cross_arch: [ amd64 ]
         include:
           - cross_os: public_res
@@ -26,6 +25,10 @@ jobs:
     steps:
       - name: Checking out sources
         uses: actions/checkout@v3
+        with:
+          repository: MatsuriDayo/nekoray
+          ref: main
+          submodules: recursive
       - name: Go Status
         run: git ls-files go | xargs cat | sha1sum > go_status
       - name: Cache Common Download
@@ -51,7 +54,7 @@ jobs:
         if: steps.cache-common.outputs.cache-hit != 'true'
         run: tar czvf artifacts.tgz ./deployment
       - name: Uploading Artifact
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v3
         with:
           name: NekoRay-${{ github.sha }}-Common-${{ matrix.cross_os }}-${{ matrix.cross_arch }}
           path: artifacts.tgz
@@ -62,11 +65,7 @@ jobs:
           - platform: windows-2022
             arch: x64
             qt_version: "6.5"
-          - platform: ubuntu-20.04
-            arch: x64
-            qt_version: "5.12"
       fail-fast: false
-
     runs-on: ${{ matrix.platform }}
     env:
       ACTIONS_ALLOW_UNSECURE_COMMANDS: true
@@ -74,7 +73,19 @@ jobs:
       - name: Checking out sources
         uses: actions/checkout@v3
         with:
-          submodules: "recursive"
+          repository: MatsuriDayo/nekoray
+          ref: main
+          submodules: recursive
+      - name: Modify File
+        run: |
+          if (Test-Path "main\NekoGui_DataStore.hpp") { $content = Get-Content "main\NekoGui_DataStore.hpp" -Raw; if ($content -match "bool remember_enable = false;") { $content = $content -replace "bool remember_enable = false;", "bool remember_enable = true;"; $content | Set-Content "main\NekoGui_DataStore.hpp" -Force } }
+          if (Test-Path "main\NekoGui_DataStore.hpp") { $content = Get-Content "main\NekoGui_DataStore.hpp" -Raw; if ($content -match 'QString direct_ip;\s+QString direct_domain;') { $content = $content -replace 'QString direct_ip;\s+QString direct_domain;', 'QString direct_ip = "geoip:cn\ngeoip:private"; QString direct_domain = "geosite:cn";' | Set-Content "main\NekoGui_DataStore.hpp" -Force } }
+          if (Test-Path "main\NekoGui_DataStore.hpp") { $content = Get-Content "main\NekoGui_DataStore.hpp" -Raw; if ($content -match "int language = 0;") { $content = $content -replace "int language = 0;", "int language = 2;"; $content | Set-Content "main\NekoGui_DataStore.hpp" -Force } }
+          if (Test-Path "main\NekoGui_DataStore.hpp") { $content = Get-Content "main\NekoGui_DataStore.hpp" -Raw; if ($content -match "int inbound_http_port = -2081;") { $content = $content -replace "int inbound_http_port = -2081;", "int inbound_http_port = 2081;"; $content | Set-Content "main\NekoGui_DataStore.hpp" -Force } }
+          if (Test-Path "main\NekoGui.cpp") { $content = Get-Content "main\NekoGui.cpp" -Raw; if ($content -match 'block_domain = "geosite:category-ads-all\n'+'domain:appcenter.ms\n'+'domain:app-measurement.com\n'+'domain:firebase.io\n'+'domain:crashlytics.com\n'+'domain:google-analytics.com";') { $content = $content -replace 'block_domain = "geosite:category-ads-all\n'+'domain:appcenter.ms\n'+'domain:app-measurement.com\n'+'domain:firebase.io\n'+'domain:crashlytics.com\n'+'domain:google-analytics.com";', 'block_domain = "";'; $content | Set-Content "main\NekoGui.cpp" -Force } }
+          if (Test-Path "libs\build_public_res.sh") {Write-Host "File 'libs\build_public_res.sh' exists, proceeding..."; $content = Get-Content "libs\build_public_res.sh" -Raw; if ($content -match 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat') {$content = $content -replace 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat', 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat'; $content | Set-Content "libs\build_public_res.sh" -Force; Write-Host "URL has been replaced successfully in 'libs\build_public_res.sh'."}} else {Write-Host "File 'libs\build_public_res.sh' does not exist, skipping..."}
+          if (Test-Path "ui\mainwindow.cpp") { $content = Get-Content "ui\mainwindow.cpp" -Raw; if ($content -match "https://matsuricom.pages.dev/") { $content = $content -replace "https://matsuricom.pages.dev/", "https://autoxtls.github.io/"; $content | Set-Content "ui\mainwindow.cpp" -Force } }
+          if (Test-Path "go\grpc_server\update.go") { $content = Get-Content "go\grpc_server\update.go" -Raw; if ($content -match "https://api.github.com/repos/MatsuriDayo/nekoray/releases") { $content = $content -replace "https://api.github.com/repos/MatsuriDayo/nekoray/releases", "https://api.github.com/repos/autoxtls/nekoray-windows/releases"; $content | Set-Content "go\grpc_server\update.go" -Force } }
       - name: Install MSVC compiler
         if: matrix.platform == 'windows-2022'
         uses: ilammy/msvc-dev-cmd@v1
@@ -102,16 +113,6 @@ jobs:
         shell: bash
         if: steps.cache-deps.outputs.cache-hit != 'true' && matrix.platform != 'ubuntu-20.04'
         run: ./libs/build_deps_all.sh
-      - name: Build Dependencies (Docker)
-        shell: bash
-        if: steps.cache-deps.outputs.cache-hit != 'true' && matrix.platform == 'ubuntu-20.04'
-        run: |
-          docker run --rm \
-            -v $PWD:/nekoray \
-            -w /nekoray \
-            ghcr.io/matsuridayo/debian10-qt5:20230131 \
-            bash -c "./libs/build_deps_all.sh"
-      # ========================================================================================================= Generate MakeFile and Build
       - name: Windows - Generate MakeFile and Build
         shell: bash
         if: matrix.platform == 'windows-2022'
@@ -127,21 +128,11 @@ jobs:
           ninja -j2
           cd ..
           ./libs/deploy_windows64.sh
-      - name: Linux - Generate MakeFile and Build
-        shell: bash
-        if: matrix.platform == 'ubuntu-20.04'
-        run: |
-          docker run --rm \
-            -v $PWD:/nekoray \
-            -w /nekoray \
-            ghcr.io/matsuridayo/debian10-qt5:20230131 \
-            bash -c "mkdir build && pushd build && cmake -GNinja -DCMAKE_BUILD_TYPE=Release .. && ninja && popd &&./libs/deploy_linux64.sh"
-      # ========================================================================================================= Deployments
       - name: Tar files
         shell: bash
         run: tar czvf artifacts.tgz ./deployment
       - name: Uploading Artifact
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v3
         with:
           name: NekoRay-${{ github.sha }}-${{ matrix.platform }}-${{ matrix.arch }}-Qt${{ matrix.qt_version }}
           path: artifacts.tgz
@@ -167,49 +158,24 @@ jobs:
           source libs/env_deploy.sh
           find . -name artifacts.tgz | xargs -n1 tar xvzf
           cd deployment
-          cp -r public_res/* linux64
           cp -r public_res/* windows64
           rm -rf public_res *.pdb
-          ####
-          mv linux64 nekoray
-          zip -r $version_standalone-linux64.zip nekoray
-          rm -rf nekoray
           ####
           mv windows64 nekoray
           zip -r $version_standalone-windows64.zip nekoray
           rm -rf nekoray
-      - name: Pack Debian
-        run: |
-          source libs/env_deploy.sh
-          find . -name artifacts.tgz | xargs -n1 tar xvzf
-          cd deployment
-          cp -r public_res/* linux64
-          ####
-          bash ../libs/package_debian.sh ${{ github.event.inputs.tag }}
-          mv nekoray.deb $version_standalone-debian-x64.deb
-          sudo rm -rf nekoray
-      - name: Pack AppImage
-        run: |
-          source libs/env_deploy.sh
-          find . -name artifacts.tgz | xargs -n1 tar xvzf
-          cd deployment
-          cp -r public_res/* linux64
-          ####
-          bash ../libs/package_appimage.sh
-          mv nekoray-x86_64.AppImage $version_standalone-linux-x64.AppImage
       - name: Clean Up
         run: |
           cd deployment
-          rm -rf linux64
           rm -rf windows64
           rm -rf public_res
           rm -rf *.pdb
       - name: Uploading Artifact
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v3
         with:
           name: Deployment-${{ github.sha }}
           path: deployment
       - name: Release
-        if: github.event.inputs.publish != 'y'
         run: |
-          ./ghr -delete -t "${{ github.token }}" -n "${{ github.event.inputs.tag }}" "${{ github.event.inputs.tag }}" deployment
+          latest_tag=$(curl -s https://api.github.com/repos/MatsuriDayo/nekoray/tags | jq -r '.[0].name')
+          ./ghr -delete -t "${{ secrets.NEKORAY_WORKFLOW_TOKEN }}" -n "$latest_tag" -b "Built on the original repository." "$latest_tag" deployment
